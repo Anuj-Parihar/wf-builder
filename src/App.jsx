@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 const createId = () => Math.random().toString(36).slice(2);
 const createNode = (type, label) => {
   const id = createId();
@@ -17,6 +17,9 @@ const createNode = (type, label) => {
     children: [],
   };
 };
+
+// Deep clone helper used for immutable history snapshots
+const snapshot = (obj) => JSON.parse(JSON.stringify(obj));
 // -------------------- App --------------------
 export default function App() {
   const [nodes, setNodes] = useState(() => {
@@ -26,25 +29,45 @@ export default function App() {
   const [rootId] = useState(() => Object.keys(nodes)[0]);
   const [history, setHistory] = useState([]);
   const [future, setFuture] = useState([]);
+  const [saveMessage, setSaveMessage] = useState("");
+  const saveTimer = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, []);
 
   const commit = (newNodes) => {
-    setHistory((h) => [...h, nodes]);
+    setHistory((h) => [...h, snapshot(nodes)]);
     setFuture([]);
-    setNodes(newNodes);
+    setNodes(snapshot(newNodes));
   };
 
   // -------------------- Actions --------------------
   const addNode = useCallback(
     (parentId, parentType, branchKey, newType) => {
       const newNode = createNode(newType, newType.toUpperCase());
-      const updated = { ...nodes, [newNode.id]: newNode };
+      const parent = nodes[parentId];
+      let updatedParent;
 
-      const parent = updated[parentId];
       if (parentType === "branch") {
-        parent.children[branchKey] = newNode.id;
+        updatedParent = {
+          ...parent,
+          children: { ...parent.children, [branchKey]: newNode.id },
+        };
       } else {
-        parent.children = [newNode.id];
+        updatedParent = {
+          ...parent,
+          children: [newNode.id],
+        };
       }
+
+      const updated = {
+        ...nodes,
+        [newNode.id]: newNode,
+        [parentId]: updatedParent,
+      };
       commit(updated);
     },
     [nodes]
@@ -54,21 +77,27 @@ export default function App() {
     (nodeId) => {
       if (nodeId === rootId) return;
 
-      const updated = { ...nodes };
-      const target = updated[nodeId];
+      const target = nodes[nodeId];
+      // clone every node shallowly so we can modify children immutably
+      const updated = Object.keys(nodes).reduce((acc, key) => {
+        acc[key] = { ...nodes[key] };
+        return acc;
+      }, {});
 
       Object.values(updated).forEach((node) => {
         if (node.type === "branch") {
-          Object.keys(node.children).forEach((k) => {
-            if (node.children[k] === nodeId) {
-              node.children[k] = target.type === "branch"
-                ? null
-                : target.children[0] || null;
+          const newChildren = { ...node.children };
+          Object.keys(newChildren).forEach((k) => {
+            if (newChildren[k] === nodeId) {
+              newChildren[k] =
+                target.type === "branch" ? null : target.children[0] || null;
             }
           });
+          node.children = newChildren;
         } else if (Array.isArray(node.children)) {
           if (node.children[0] === nodeId) {
-            node.children = target.type === "branch" ? [] : target.children;
+            node.children =
+              target.type === "branch" ? [] : [...target.children];
           }
         }
       });
@@ -84,23 +113,37 @@ export default function App() {
   };
 
   const undo = () => {
-    if (!history.length) return;
-    const prev = history[history.length - 1];
-    setHistory(history.slice(0, -1));
-    setFuture((f) => [nodes, ...f]);
-    setNodes(prev);
+    setHistory((h) => {
+      if (!h.length) return h;
+      const prev = h[h.length - 1];
+      setFuture((f) => [snapshot(nodes), ...f]);
+      setNodes(snapshot(prev));
+      return h.slice(0, -1);
+    });
   };
 
   const redo = () => {
-    if (!future.length) return;
-    const next = future[0];
-    setFuture(future.slice(1));
-    setHistory((h) => [...h, nodes]);
-    setNodes(next);
+    setFuture((f) => {
+      if (!f.length) return f;
+      const [next, ...rest] = f;
+      setHistory((h) => [...h, snapshot(nodes)]);
+      setNodes(snapshot(next));
+      return rest;
+    });
   };
 
   const save = () => {
     console.log("Workflow:", nodes);
+    // show transient confirmation message
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+    }
+    const ts = new Date().toLocaleTimeString();
+    setSaveMessage(`Saved at ${ts}`);
+    saveTimer.current = setTimeout(() => {
+      setSaveMessage("");
+      saveTimer.current = null;
+    }, 2000);
   };
 
   return (
@@ -110,7 +153,12 @@ export default function App() {
         <div className="toolbar">
           <button onClick={undo}>Undo</button>
           <button onClick={redo}>Redo</button>
-          <button onClick={save}>Save</button>
+          <button onClick={save}>Save in Console</button>
+          {saveMessage && (
+            <span className="save-message" aria-live="polite">
+              {saveMessage}
+            </span>
+          )}
         </div>
       </header>
 
@@ -133,10 +181,7 @@ function Node({ id, nodes, onAdd, onDelete, onEdit }) {
 
   return (
     <div className={`node ${node.type}`}>
-      <input
-        value={node.label}
-        onChange={(e) => onEdit(id, e.target.value)}
-      />
+      <input value={node.label} onChange={(e) => onEdit(id, e.target.value)} />
 
       {node.type !== "start" && (
         <button className="delete" onClick={() => onDelete(id)}>
@@ -158,9 +203,7 @@ function Node({ id, nodes, onAdd, onDelete, onEdit }) {
                   onEdit={onEdit}
                 />
               ) : (
-                <AddMenu
-                  onSelect={(t) => onAdd(id, "branch", key, t)}
-                />
+                <AddMenu onSelect={(t) => onAdd(id, "branch", key, t)} />
               )}
             </div>
           ))
