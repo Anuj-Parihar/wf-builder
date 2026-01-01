@@ -18,7 +18,6 @@ const createNode = (type, label) => {
   };
 };
 
-// Deep clone helper used for immutable history snapshots
 const snapshot = (obj) => JSON.parse(JSON.stringify(obj));
 // -------------------- App --------------------
 export default function App() {
@@ -78,7 +77,6 @@ export default function App() {
       if (nodeId === rootId) return;
 
       const target = nodes[nodeId];
-      // clone every node shallowly so we can modify children immutably
       const updated = Object.keys(nodes).reduce((acc, key) => {
         acc[key] = { ...nodes[key] };
         return acc;
