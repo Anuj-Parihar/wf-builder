@@ -17,7 +17,6 @@ const createNode = (type, label) => {
     children: [],
   };
 };
-
 // -------------------- App --------------------
 export default function App() {
   const [nodes, setNodes] = useState(() => {
